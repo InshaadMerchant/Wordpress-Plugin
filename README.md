@@ -180,13 +180,6 @@ For support and feature requests:
 
 ## Changelog
 
-### Version 3.0
-- 🚀 **Automatic bulk conversion** of all existing articles
-- 🎯 **Smart button display** - only for new posts
-- ⚡ **Plugin lifecycle management** - activate/deactivate controls all articles
-- 🔧 **Bulk admin controls** - convert/revert entire website
-- 📊 **Status monitoring** - track plugin and conversion status
-
 ### Version 2.1
 - ✨ Simplified to single toggle button interface
 - 🎯 Clean, focused user experience

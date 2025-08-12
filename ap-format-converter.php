@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Dynamic Format Converter
  * Description: Allow visitors to convert articles to different formats (AP Style, etc.)
- * Version: 2.0
+ * Version: 2.1
  * Author: Digital Commerce 360 Pakistan
  */
 
@@ -14,7 +14,6 @@ if (!defined('ABSPATH')) {
 class DynamicFormatConverter {
     
     private $api_key;
-    private $activation_date;
     
     public function __construct() {
         // Admin hooks
@@ -29,129 +28,8 @@ class DynamicFormatConverter {
         add_action('wp_ajax_convert_article_format', array($this, 'convert_article_format'));
         add_action('wp_ajax_nopriv_convert_article_format', array($this, 'convert_article_format'));
         
-        // Plugin activation/deactivation hooks
-        register_activation_hook(__FILE__, array($this, 'plugin_activated'));
-        register_deactivation_hook(__FILE__, array($this, 'plugin_deactivated'));
-        
-        // Initialize API key and activation date
+        // Initialize API key
         $this->api_key = get_option('format_converter_api_key', '');
-        $this->activation_date = get_option('format_converter_activation_date', '');
-        
-        // Add bulk conversion admin action
-        add_action('admin_post_bulk_convert_to_ap', array($this, 'bulk_convert_to_ap'));
-        add_action('admin_post_bulk_revert_to_original', array($this, 'bulk_revert_to_original'));
-    }
-    
-    // Plugin activation - convert all existing articles to AP format
-    public function plugin_activated() {
-        // Store activation date
-        update_option('format_converter_activation_date', current_time('mysql'));
-        
-        // Convert all existing articles to AP format
-        $this->bulk_convert_all_existing_posts();
-        
-        // Set flag that plugin is active
-        update_option('format_converter_plugin_active', true);
-    }
-    
-    // Plugin deactivation - revert all articles to original format
-    public function plugin_deactivated() {
-        // Revert all articles to original format
-        $this->bulk_revert_all_posts();
-        
-        // Remove flag
-        delete_option('format_converter_plugin_active');
-    }
-    
-    // Bulk convert all existing posts to AP format
-    private function bulk_convert_all_existing_posts() {
-        if (empty($this->api_key)) {
-            return;
-        }
-        
-        $posts = get_posts(array(
-            'numberposts' => -1,
-            'post_type' => 'post',
-            'post_status' => 'publish'
-        ));
-        
-        foreach ($posts as $post) {
-            // Check if this post was created before plugin activation
-            if (strtotime($post->post_date) < strtotime($this->activation_date)) {
-                $this->convert_single_post_to_ap($post);
-            }
-        }
-    }
-    
-    // Bulk revert all posts to original format
-    private function bulk_revert_all_posts() {
-        global $wpdb;
-        
-        // Get all posts that have been converted
-        $converted_posts = $wpdb->get_results(
-            "SELECT post_id FROM {$wpdb->postmeta} 
-             WHERE meta_key = '_ap_converted' AND meta_value = '1'"
-        );
-        
-        $reverted_count = 0;
-        foreach ($converted_posts as $converted_post) {
-            if ($this->revert_single_post_to_original($converted_post->post_id)) {
-                $reverted_count++;
-            }
-        }
-        
-        return $reverted_count;
-    }
-    
-    // Convert a single post to AP format
-    private function convert_single_post_to_ap($post) {
-        if (empty($this->api_key)) {
-            return false;
-        }
-        
-        // Store original content
-        update_post_meta($post->ID, '_original_content', $post->post_content);
-        
-        // Convert to AP format
-        $result = $this->convert_to_ap_format($post);
-        
-        if ($result['success']) {
-            // Update post content
-            wp_update_post(array(
-                'ID' => $post->ID,
-                'post_content' => $result['content']
-            ));
-            
-            // Mark as converted
-            update_post_meta($post->ID, '_ap_converted', '1');
-            update_post_meta($post->ID, '_ap_conversion_date', current_time('mysql'));
-            
-            return true;
-        }
-        
-        return false;
-    }
-    
-    // Revert a single post to original format
-    private function revert_single_post_to_original($post_id) {
-        $original_content = get_post_meta($post_id, '_original_content', true);
-        
-        if (!empty($original_content)) {
-            // Restore original content
-            wp_update_post(array(
-                'ID' => $post_id,
-                'post_content' => $original_content
-            ));
-            
-            // Remove conversion metadata
-            delete_post_meta($post_id, '_ap_converted');
-            delete_post_meta($post_id, '_ap_conversion_date');
-            delete_post_meta($post_id, '_original_content');
-            
-            return true;
-        }
-        
-        return false;
     }
     
     public function enqueue_frontend_scripts() {
@@ -165,9 +43,6 @@ class DynamicFormatConverter {
             
             // Add CSS inline
             wp_add_inline_style('wp-block-library', $this->get_frontend_css());
-            
-            // Debug: Add console log to verify script loading
-            wp_add_inline_script('format-converter-frontend', 'console.log("Format Converter Plugin: Script loaded successfully");', 'after');
         }
     }
     
@@ -179,17 +54,7 @@ class DynamicFormatConverter {
         
         global $post;
         
-        // Check if this post was created after plugin activation
-        $activation_date = get_option('format_converter_activation_date', '');
-        $post_created_date = $post->post_date;
-        
-        // Only show buttons for posts created after plugin activation
-        if (empty($activation_date) || strtotime($post_created_date) < strtotime($activation_date)) {
-            // This is an existing post - no buttons, just return content
-            return $content;
-        }
-        
-        // This is a new post - show the toggle button
+        // Add the toggle button at the bottom of the content
         $toggle_button = '
         <div id="format-converter-widget" class="format-converter-container">
             <button id="format-toggle-btn" class="format-toggle-btn" data-format="ap" data-post-id="' . $post->ID . '">
@@ -483,15 +348,6 @@ Return ONLY the converted article content in proper HTML format with paragraphs.
     }
     
     public function admin_page() {
-        // Show success messages
-        if (isset($_GET['converted'])) {
-            echo '<div class="notice notice-success"><p>Successfully converted ' . intval($_GET['converted']) . ' posts to AP format!</p></div>';
-        }
-        
-        if (isset($_GET['reverted'])) {
-            echo '<div class="notice notice-success"><p>Successfully reverted ' . intval($_GET['reverted']) . ' posts to original format!</p></div>';
-        }
-        
         if (isset($_POST['save_settings'])) {
             update_option('format_converter_api_key', sanitize_text_field($_POST['api_key']));
             update_option('format_converter_model', sanitize_text_field($_POST['model']));
@@ -500,24 +356,13 @@ Return ONLY the converted article content in proper HTML format with paragraphs.
         }
         
         $current_model = get_option('format_converter_model', 'gpt-4o-mini');
-        $activation_date = get_option('format_converter_activation_date', '');
-        $plugin_active = get_option('format_converter_plugin_active', false);
         ?>
         
         <div class="wrap">
             <h1>Dynamic Format Converter Settings</h1>
             
             <div class="notice notice-info">
-                <p><strong>Plugin Status:</strong> 
-                <?php if ($plugin_active): ?>
-                    <span style="color: green;">✅ Active</span> - All existing articles are converted to AP format
-                <?php else: ?>
-                    <span style="color: red;">❌ Inactive</span> - Articles are in original format
-                <?php endif; ?>
-                </p>
-                <?php if ($activation_date): ?>
-                    <p><strong>Activation Date:</strong> <?php echo date('F j, Y g:i A', strtotime($activation_date)); ?></p>
-                <?php endif; ?>
+                <p><strong>New Feature:</strong> Visitors can now choose article formats on the frontend! Configure your API settings below.</p>
             </div>
             
             <form method="post">
@@ -568,37 +413,8 @@ Return ONLY the converted article content in proper HTML format with paragraphs.
             </div>
             
             <div class="postbox">
-                <h2 class="hndle">Bulk Conversion Controls</h2>
+                <h2 class="hndle">Clear Cache</h2>
                 <div class="inside">
-                    <p><strong>⚠️ Important:</strong> These actions will affect ALL articles on your website.</p>
-                    
-                    <div style="margin: 20px 0;">
-                        <h3>Convert All Articles to AP Format</h3>
-                        <p>This will convert all existing articles to AP format. Original content will be preserved.</p>
-                        <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" style="display: inline;">
-                            <?php wp_nonce_field('bulk_convert_to_ap'); ?>
-                            <input type="hidden" name="action" value="bulk_convert_to_ap">
-                            <button type="submit" class="button button-primary" onclick="return confirm('This will convert ALL articles to AP format. Are you sure?')">
-                                🚀 Convert All Articles to AP Format
-                            </button>
-                        </form>
-                    </div>
-                    
-                    <div style="margin: 20px 0;">
-                        <h3>Revert All Articles to Original Format</h3>
-                        <p>This will revert all articles back to their original format.</p>
-                        <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" style="display: inline;">
-                            <?php wp_nonce_field('bulk_revert_to_original'); ?>
-                            <input type="hidden" name="action" value="bulk_revert_to_original">
-                            <button type="submit" class="button button-secondary" onclick="return confirm('This will revert ALL articles to original format. Are you sure?')">
-                                🔄 Revert All Articles to Original
-                            </button>
-                        </form>
-                    </div>
-                    
-                    <hr style="margin: 30px 0;">
-                    
-                    <h3>Clear Cache</h3>
                     <p>If you need to clear cached conversions:</p>
                     <p>
                         <button type="button" class="button" onclick="clearFormatCache()">Clear All Cached Conversions</button>
@@ -680,28 +496,3 @@ add_action('wp_ajax_clear_format_cache', function() {
     wp_send_json_success('Cache cleared');
 });
 
-// Add test AJAX handler for debugging
-add_action('wp_ajax_test_format_converter', function() {
-    check_ajax_referer('format_converter_nonce', 'nonce');
-    
-    $api_key = get_option('format_converter_api_key', '');
-    $model = get_option('format_converter_model', 'gpt-4o-mini');
-    
-    wp_send_json_success(array(
-        'api_key_configured' => !empty($api_key),
-        'api_key_length' => strlen($api_key),
-        'model' => $model,
-        'plugin_active' => true,
-        'ajax_working' => true
-    ));
-});
-
-add_action('wp_ajax_nopriv_test_format_converter', function() {
-    check_ajax_referer('format_converter_nonce', 'nonce');
-    
-    wp_send_json_success(array(
-        'plugin_active' => true,
-        'ajax_working' => true,
-        'message' => 'Test endpoint working for non-logged-in users'
-    ));
-});
